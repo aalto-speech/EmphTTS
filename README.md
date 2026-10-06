@@ -1,6 +1,8 @@
 # EmphTTS: emphasis-controlled TTS with reinforcement learning
 
 > **Paper:** [EmphTTS: an emphasis-control TTS with reinforcement learning](https://arxiv.org/abs/2609.27599) (arXiv:2609.27599).
+>
+> **Audio samples:** [aalto-speech.github.io/EmphTTS](https://aalto-speech.github.io/EmphTTS/) (source in `demo/`).
 
 ## Installation
 
