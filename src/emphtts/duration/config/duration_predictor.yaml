@@ -1,0 +1,70 @@
+# Duration predictor pretraining on Emilia EN, streamed from the Hugging Face Hub.
+# Emilia is gated: accept its terms on the Hub and run `huggingface-cli login` first.
+hydra:
+  run:
+    dir: ${ckpts.save_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+model:
+  # Model architecture parameters.
+  hidden_dim: 512
+  n_head: 8
+  n_text_layer: 4
+  n_cross_layer: 4
+  mel_spec:
+    target_sample_rate: 24000
+    n_mel_channels: 100
+    hop_length: 256
+    win_length: 1024
+    n_fft: 1024
+    mel_spec_type: vocos
+
+datasets:
+  tokenizer: "custom"
+  vocab_path: "data/vocab.txt"  # must match the F5-TTS model's vocabulary
+  batch_size: 48  # utterances per GPU
+  num_workers: 3
+  shuffle_buffer: 1000
+  seed: 666
+  probabilities: null  # mixing weights when `train` has several sources; null alternates between them
+  train:
+    # Each source is passed to datasets.load_dataset(path, name=..., data_files=..., split=..., streaming=True).
+    # For local files use e.g. path: "webdataset" with data_files: "/data/emilia/EN/*.tar".
+    emilia_en:
+      path: "amphion/Emilia-Dataset"
+      name: null
+      data_files: "Emilia/EN/*.tar"
+      split: "train"
+      audio_column: "mp3"
+      text_column: "json.text"  # dotted path into a nested column
+  validation:
+    path: "blabble-io/libritts_r"
+    name: "clean"
+    data_files: {val: "data/dev.clean/*"}
+    split: "val"
+    text_column: "text_original"
+
+loss:
+  loss_fn: 'CE' # L1, CE, L1_and_CE
+  lambda_L1: 1.0
+  gumbel_tau: 0.5
+  n_class: 301
+  n_frame_per_class: 10
+
+optim:
+  learning_rate: 1e-4
+  num_warmup_updates: 20000
+  total_updates: 85000
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  use_ema: false
+
+ckpts:
+  save_per_updates: 5000  # save model_<step>.pt and validate
+  last_per_updates: 2000  # refresh model_last.pt
+  keep_last_n_checkpoints: -1  # -1 to keep all, 0 to not save intermediate, > 0 to keep last N checkpoints
+  pretrain: null  # checkpoint to initialize from (see duration_finetune.yaml)
+  save_dir: DurPred_ckpts/emilia_en_${datasets.batch_size}_${loss.loss_fn}
+
+wandb:
+  project: "EmphTTS"
+  run_name: durpred_emilia_en_${datasets.batch_size}_${loss.loss_fn}

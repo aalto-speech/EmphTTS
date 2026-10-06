@@ -1,0 +1,42 @@
+{
+  "en-US-standard-A": {
+    "text": "When the show was over, Jack and Jane said goodbye to each other.",
+    "audio": "prompts/en-US-standard-A_train_13455.wav"
+  },
+  "en-US-standard-B": {
+    "text": "Once upon a time, there was a group of yellow chickens on a farm.",
+    "audio": "prompts/en-US-standard-B_train_07345.wav"
+  },
+  "en-US-standard-C": {
+    "text": "He learned that sometimes, it was good to slow down and listen to his body.",
+    "audio": "prompts/en-US-standard-C_train_00230.wav"
+  },
+  "en-US-standard-D": {
+    "text": "They said goodbye to the park and happily got back on the subway back home.",
+    "audio": "prompts/en-US-standard-D_train_12025.wav"
+  },
+  "en-US-standard-E": {
+    "text": "Then, he noticed a few pieces of wood and some twigs.",
+    "audio": "prompts/en-US-standard-E_train_11639.wav"
+  },
+  "en-US-standard-F": {
+    "text": "Suddenly, he saw a small pile of ash on the ground.",
+    "audio": "prompts/en-US-standard-F_train_04660.wav"
+  },
+  "en-US-standard-G": {
+    "text": "They sat under a big tree and watched the birds sing and fly.",
+    "audio": "prompts/en-US-standard-G_train_01391.wav"
+  },
+  "en-US-standard-H": {
+    "text": "Everywhere he went, Andy was curious and wanted to know more.",
+    "audio": "prompts/en-US-standard-H_train_07757.wav"
+  },
+  "en-US-standard-I": {
+    "text": "Together Daisy and her dove friend went on many adventures and caught lots of doves.",
+    "audio": "prompts/en-US-standard-I_train_08865.wav"
+  },
+  "en-US-standard-J": {
+    "text": "Molly remembered that when she was even littler, she used to sleep in a crib.",
+    "audio": "prompts/en-US-standard-J_train_04304.wav"
+  }
+}

@@ -1,0 +1,411 @@
+diff --git a/requirements.txt b/requirements.txt
+index a6168dd..e2e8ead 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -12,3 +12,5 @@ openai==1.58.1
+ tqdm==4.67.1
+ numpy==1.26.4
+ PyYAML==6.0.2
++
++pyarrow>=15.0.0
+diff --git a/stresstest/evaluation/configs.py b/stresstest/evaluation/configs.py
+index 5c2608c..ea4b6e0 100644
+--- a/stresstest/evaluation/configs.py
++++ b/stresstest/evaluation/configs.py
+@@ -13,12 +13,22 @@ class Settings(BaseSettings):
+     MODEL_TO_EVALUATE: Literal["stresslm", "qwen2audio", "gpt-4o-audio", "mock"] = "mock"
+     TASK: Literal["ssr", "ssd"] = "ssr"
+     STRESS_TEST_DS: str = "slprl/StressTest"
++    DATASET_TYPE: Literal["hf", "tinystress"] = "hf"
++    TINYSTRESS_PARQUET: str = "data/tinystress-15k/test-00000-of-00001.parquet"
++    AUDIO_DIR: str = ""
++    INFERENCE_RESULTS_FILE: str = ""
++    METRICS_FILE: str = ""
+ 
+ 
+ def parse_args():
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--task", choices=["ssr", "ssd"], help="Which task to run")
+     parser.add_argument("--model_to_evaluate", choices=["stresslm", "qwen2audio", "gpt-4o-audio", "mock"], help="Model name")
++    parser.add_argument("--dataset_type", choices=["hf", "tinystress"], default="hf")
++    parser.add_argument("--tinystress_parquet", default="data/tinystress-15k/test-00000-of-00001.parquet")
++    parser.add_argument("--audio_dir", default="", help="TinyStress generation WAV directory; omit for embedded gold audio")
++    parser.add_argument("--inference_results_file", default="")
++    parser.add_argument("--metrics_file", default="")
+     args = parser.parse_args()
+     return args
+ 
+@@ -26,5 +36,10 @@ args = parse_args()
+ 
+ configs = Settings(**{
+     "TASK": args.task,
+-    "MODEL_TO_EVALUATE": args.model_to_evaluate
++    "MODEL_TO_EVALUATE": args.model_to_evaluate,
++    "DATASET_TYPE": args.dataset_type,
++    "TINYSTRESS_PARQUET": args.tinystress_parquet,
++    "AUDIO_DIR": args.audio_dir,
++    "INFERENCE_RESULTS_FILE": args.inference_results_file,
++    "METRICS_FILE": args.metrics_file
+ })
+diff --git a/stresstest/evaluation/src/evaluator/evaluator_stress_detection.py b/stresstest/evaluation/src/evaluator/evaluator_stress_detection.py
+index d8c0a7d..07f91de 100644
+--- a/stresstest/evaluation/src/evaluator/evaluator_stress_detection.py
++++ b/stresstest/evaluation/src/evaluator/evaluator_stress_detection.py
+@@ -7,6 +7,7 @@ from ...clients import storage_client, logger, inference_client
+ from ..data_models import AudioLLMPrompt, AudioLLMPromptPool
+ from ..agents import EvaluatorBase, OpenAIEvaluatorAgent
+ from .prompter import Prompter
++from ..tinystress_dataset import TINYSTRESS_DATASET_NAME, TinyStressDataset
+ 
+ 
+ 
+@@ -29,9 +30,12 @@ class EvaluatorStressDetection:
+         self.precision_metric = evaluate.load("precision")
+         self.recall_metric = evaluate.load("recall")
+         self.f1_metric = evaluate.load("f1")
+-        self.results_file_path = f"{configs.MODEL_TO_EVALUATE}_evaluation_ssd.json"
++        self.results_file_path = configs.INFERENCE_RESULTS_FILE or f"{configs.MODEL_TO_EVALUATE}_evaluation_ssd.json"
++        self.metrics_file_path = configs.METRICS_FILE or f"{configs.MODEL_TO_EVALUATE}_evaluation_metrics_ssd.json"
+ 
+     def prepare_dataset(self):
++        if configs.DATASET_TYPE == "tinystress":
++            return TinyStressDataset(configs.TINYSTRESS_PARQUET, configs.AUDIO_DIR or None)
+         dataset: Dataset = load_dataset(
+             configs.STRESS_TEST_DS,
+             split="test",
+@@ -70,9 +74,11 @@ class EvaluatorStressDetection:
+ 
+     def make_inference(self):
+         self.logger.info(f"Making inference for prompt: {self.prompt_template.id}")
++        dataset_name = TINYSTRESS_DATASET_NAME if configs.DATASET_TYPE == "tinystress" else configs.STRESS_TEST_DS
+         initial_data = {
+             "task": "stress_detection",
+-            "dataset": configs.STRESS_TEST_DS,
++            "dataset": dataset_name,
++            "dataset_type": configs.DATASET_TYPE,
+             "model": configs.MODEL_TO_EVALUATE,
+             "evaluator_model": configs.JUDGE_MODEL_NAME,
+             "evaluations": []
+@@ -82,7 +88,7 @@ class EvaluatorStressDetection:
+             data=initial_data
+         )
+         
+-        for sample_idx, sample in tqdm(enumerate(self.dataset)):
++        for sample_idx, sample in tqdm(enumerate(self.dataset), total=len(self.dataset)):
+             transcription = self.normalize_sentence(sample["transcription"])
+ 
+             self.logger.info(
+@@ -111,6 +117,8 @@ class EvaluatorStressDetection:
+             results_data["evaluations"].append(
+                 {
+                     "sample_index": sample_idx,
++                    "sample_id": sample.get("id", sample_idx),
++                    "utterance_id": sample.get("utterance_id"),
+                     "intonation": sample["intonation"],
+                     "prompt_id": self.prompt_template.id,
+                     "audio_path": sample["audio"]["path"],
+@@ -154,14 +162,15 @@ class EvaluatorStressDetection:
+             labels.extend(label)
+         ssd_metrics = self.compute_prf_metrics(predictions=preds, references=labels)
+ 
++        dataset_name = TINYSTRESS_DATASET_NAME if configs.DATASET_TYPE == "tinystress" else configs.STRESS_TEST_DS
+         results = {
+             "task": "SSD",
+-            "dataset": configs.STRESS_TEST_DS,
++            "dataset": dataset_name,
++            "dataset_type": configs.DATASET_TYPE,
+             "prompt_id": self.prompt_template.id,
+-            "description": f"StessTest results for {configs.MODEL_TO_EVALUATE} on {configs.STRESS_TEST_DS} with evaluator {self.evaluator_type}",
++            "description": f"StressTest results for {configs.MODEL_TO_EVALUATE} on {dataset_name} with evaluator {self.evaluator_type}",
+             "ssd_metrics": ssd_metrics,
+         }
+         self.logger.info(f"Results: {results}")
+-        file_path = f"{configs.MODEL_TO_EVALUATE}_evaluation_metrics_ssd.json"
+-        storage_client.save_json(file_name=file_path, data=results)
++        storage_client.save_json(file_name=self.metrics_file_path, data=results)
+         return results
+diff --git a/stresstest/evaluation/src/inference/inference_client_qwen2_audio.py b/stresstest/evaluation/src/inference/inference_client_qwen2_audio.py
+index 94aceed..f2fa292 100644
+--- a/stresstest/evaluation/src/inference/inference_client_qwen2_audio.py
++++ b/stresstest/evaluation/src/inference/inference_client_qwen2_audio.py
+@@ -1,4 +1,5 @@
+ import time
++import numpy as np
+ import torch
+ import librosa
+ from transformers import Qwen2AudioForConditionalGeneration, AutoProcessor
+@@ -39,7 +40,7 @@ class InferenceClientQwen2Audio(InferenceClientBase):
+         inputs = self.processor(text=text, audios=audio, return_tensors="pt", padding=True)
+         inputs = {k: v.to("cuda") if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+         start = time.time()
+-        generate_ids = self.model.generate(**inputs, max_length=512)
++        generate_ids = self.model.generate(**inputs, max_new_tokens=512)
+         self.logger.info(f"Predicted in {time.time() - start:.2f}s")
+         generate_ids = generate_ids[:, inputs['input_ids'].size(1):]
+         response = self.processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+@@ -57,7 +58,7 @@ class InferenceClientQwen2Audio(InferenceClientBase):
+         conversation = self.model_conversation_template(text_prompt, audio['path'])
+         text = self.processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+         audio_resample = librosa.resample(
+-            y=audio['array'], 
++            y=np.asarray(audio['array'], dtype=np.float32),
+             orig_sr=audio['sampling_rate'], 
+             target_sr=self.processor.feature_extractor.sampling_rate
+         )
+diff --git a/stresstest/evaluation/src/tinystress_dataset.py b/stresstest/evaluation/src/tinystress_dataset.py
+new file mode 100644
+index 0000000..ee75b76
+--- /dev/null
++++ b/stresstest/evaluation/src/tinystress_dataset.py
+@@ -0,0 +1,251 @@
++"""TinyStress-15K dataset loading for sentence-stress evaluation."""
++
++from __future__ import annotations
++
++import io
++import re
++from collections.abc import Iterator
++from numbers import Integral
++from pathlib import Path
++
++import numpy as np
++import pyarrow.parquet as pq
++import soundfile as sf
++
++
++TINYSTRESS_DATASET_NAME = "slprl/TinyStress-15K"
++TINYSTRESS_REQUIRED_COLUMNS = ("id", "transcription", "emphasis_indices")
++
++
++def normalize_sentence(text: str) -> str:
++    """Mirror the normalization used by the SSD prompt and prediction scorer."""
++    return re.sub(r"[^\w\s]", "", text.lower())
++
++
++def _build_stress_targets(words: list[str], emphasis_indices: list[int]) -> tuple[list[int], str]:
++    """Align TinyStress whitespace-token labels with normalized prompt tokens."""
++    emphasis_set = set(emphasis_indices)
++    normalized_words = []
++    labels = []
++
++    for index, word in enumerate(words):
++        normalized_word = normalize_sentence(word).strip()
++        if not normalized_word:
++            if index in emphasis_set:
++                raise ValueError(f"emphasized token {index} ({word!r}) disappears after normalization")
++            continue
++
++        # A whitespace-split source token cannot normally produce multiple words,
++        # but splitting here keeps the labels aligned if unusual whitespace occurs.
++        token_words = normalized_word.split()
++        normalized_words.extend(token_words)
++        labels.extend([int(index in emphasis_set)] * len(token_words))
++
++    intonation = " ".join(
++        f"*{word}*" if label else word for word, label in zip(normalized_words, labels)
++    )
++    return labels, intonation
++
++
++def _read_audio(source, source_name: str) -> dict:
++    try:
++        array, sampling_rate = sf.read(source, dtype="float32")
++    except Exception as error:
++        raise ValueError(f"Could not decode TinyStress audio {source_name}: {error}") from error
++
++    array = np.asarray(array, dtype=np.float32)
++    if array.ndim == 2:
++        array = array.mean(axis=1, dtype=np.float32)
++    if array.ndim != 1 or not array.size:
++        raise ValueError(
++            f"TinyStress audio {source_name} must contain a non-empty mono/stereo waveform; "
++            f"got shape {array.shape}."
++        )
++
++    return {
++        "array": array,
++        "sampling_rate": sampling_rate,
++        "path": source_name,
++    }
++
++
++class TinyStressDataset:
++    """Re-iterable TinyStress test split with audio decoded one sample at a time.
++
++    When ``audio_dir`` is omitted, audio comes from the Parquet ``audio.bytes``
++    field. Otherwise every row must have a generated
++    ``tinystress_{id:05d}.wav`` file in ``audio_dir``.
++    """
++
++    def __init__(self, parquet_path: str | Path, audio_dir: str | Path | None = None):
++        self.parquet_path = Path(parquet_path).expanduser()
++        self.audio_dir = Path(audio_dir).expanduser() if audio_dir else None
++        self.rows = self._read_rows()
++        self._validate_audio_source()
++
++    def __len__(self) -> int:
++        return len(self.rows)
++
++    @property
++    def is_ground_truth(self) -> bool:
++        return self.audio_dir is None
++
++    @property
++    def audio_source(self) -> str:
++        return str(self.parquet_path if self.is_ground_truth else self.audio_dir)
++
++    def _read_rows(self) -> list[dict]:
++        if not self.parquet_path.is_file():
++            raise FileNotFoundError(f"TinyStress Parquet file not found: {self.parquet_path}")
++
++        parquet_file = pq.ParquetFile(self.parquet_path)
++        available_columns = set(parquet_file.schema_arrow.names)
++        missing_columns = [
++            column for column in TINYSTRESS_REQUIRED_COLUMNS if column not in available_columns
++        ]
++        if missing_columns:
++            raise ValueError(
++                f"TinyStress Parquet {self.parquet_path} is missing required columns "
++                f"{missing_columns}; found {sorted(available_columns)}."
++            )
++
++        rows = []
++        seen_ids = set()
++        problems = []
++        for batch in parquet_file.iter_batches(
++            batch_size=256, columns=list(TINYSTRESS_REQUIRED_COLUMNS)
++        ):
++            for record in batch.to_pylist():
++                sample_id = record["id"]
++                if isinstance(sample_id, bool) or not isinstance(sample_id, Integral):
++                    problems.append(f"id={sample_id!r}: id must be an integer")
++                    continue
++                sample_id = int(sample_id)
++                if sample_id in seen_ids:
++                    problems.append(f"id={sample_id}: duplicate id")
++                    continue
++                seen_ids.add(sample_id)
++
++                transcription = record["transcription"]
++                if not isinstance(transcription, str) or not transcription.strip():
++                    problems.append(f"id={sample_id}: transcription must be a non-empty string")
++                    continue
++
++                words = transcription.split()
++                emphasis_indices = record["emphasis_indices"] or []
++                if any(
++                    isinstance(index, bool) or not isinstance(index, Integral)
++                    for index in emphasis_indices
++                ):
++                    problems.append(f"id={sample_id}: emphasis_indices must contain only integers")
++                    continue
++                emphasis_indices = sorted({int(index) for index in emphasis_indices})
++                invalid_indices = [
++                    index for index in emphasis_indices if index < 0 or index >= len(words)
++                ]
++                if invalid_indices:
++                    problems.append(
++                        f"id={sample_id}: emphasis indices {invalid_indices} are outside "
++                        f"[0, {len(words)})"
++                    )
++                    continue
++
++                try:
++                    stress_labels, intonation = _build_stress_targets(words, emphasis_indices)
++                except ValueError as error:
++                    problems.append(f"id={sample_id}: {error}")
++                    continue
++
++                utterance_id = f"tinystress_{sample_id:05d}"
++                rows.append(
++                    {
++                        "id": sample_id,
++                        "utterance_id": utterance_id,
++                        "transcription": transcription,
++                        "stress_labels": stress_labels,
++                        "intonation": intonation,
++                    }
++                )
++
++        if problems:
++            preview = "\n".join(f"  {problem}" for problem in problems[:20])
++            remainder = f"\n  ... and {len(problems) - 20} more" if len(problems) > 20 else ""
++            raise ValueError(
++                f"TinyStress metadata validation failed for {len(problems)} row(s):\n"
++                f"{preview}{remainder}"
++            )
++        if not rows:
++            raise ValueError(f"TinyStress Parquet {self.parquet_path} contains no usable rows.")
++        return rows
++
++    def _validate_audio_source(self) -> None:
++        if self.is_ground_truth:
++            available_columns = set(pq.ParquetFile(self.parquet_path).schema_arrow.names)
++            if "audio" not in available_columns:
++                raise ValueError(f"TinyStress Parquet {self.parquet_path} has no 'audio' column.")
++            return
++
++        if not self.audio_dir.is_dir():
++            raise NotADirectoryError(f"TinyStress generated-audio directory not found: {self.audio_dir}")
++
++        missing = [
++            row["utterance_id"]
++            for row in self.rows
++            if not (self.audio_dir / f"{row['utterance_id']}.wav").is_file()
++        ]
++        if missing:
++            raise FileNotFoundError(
++                f"{len(missing)} of {len(self.rows)} TinyStress generations are missing from "
++                f"{self.audio_dir}; for example: {missing[:10]}."
++            )
++
++    @staticmethod
++    def _sample(row: dict, audio: dict) -> dict:
++        return {
++            "id": row["id"],
++            "utterance_id": row["utterance_id"],
++            "transcription": row["transcription"],
++            "stress_labels": row["stress_labels"],
++            "intonation": row["intonation"],
++            "audio": audio,
++        }
++
++    def _iter_ground_truth(self) -> Iterator[dict]:
++        rows_by_id = {row["id"]: row for row in self.rows}
++        seen_ids = set()
++        parquet_file = pq.ParquetFile(self.parquet_path)
++
++        for batch in parquet_file.iter_batches(batch_size=8, columns=["id", "audio"]):
++            for record in batch.to_pylist():
++                sample_id = int(record["id"])
++                row = rows_by_id.get(sample_id)
++                if row is None:
++                    continue
++                payload = (record["audio"] or {}).get("bytes")
++                if not payload:
++                    raise ValueError(
++                        f"TinyStress row id={sample_id} has an empty embedded audio payload."
++                    )
++
++                seen_ids.add(sample_id)
++                audio_name = f"{row['utterance_id']}.wav"
++                audio = _read_audio(io.BytesIO(payload), audio_name)
++                yield self._sample(row, audio)
++
++        missing_audio = sorted(set(rows_by_id) - seen_ids)
++        if missing_audio:
++            raise ValueError(
++                f"TinyStress Parquet {self.parquet_path} is missing embedded audio for ids "
++                f"{missing_audio[:10]}."
++            )
++
++    def _iter_generated(self) -> Iterator[dict]:
++        for row in self.rows:
++            audio_path = self.audio_dir / f"{row['utterance_id']}.wav"
++            yield self._sample(row, _read_audio(audio_path, str(audio_path)))
++
++    def __iter__(self) -> Iterator[dict]:
++        if self.is_ground_truth:
++            yield from self._iter_ground_truth()
++        else:
++            yield from self._iter_generated()

@@ -1,0 +1,44 @@
+# Fine-tune a pretrained duration predictor on Expresso alternating with a fixed 5% of an Emilia EN subset,
+# as in the paper's run. Model, loss, vocabulary and validation come from duration_predictor.yaml.
+defaults:
+  - duration_predictor
+  - _self_
+
+datasets:
+  train: null  # the streamed pretraining sources are not used here
+  num_proc: 8  # parallel download/preparation of the map-style sources
+  finetune:
+    # Loaded as map-style datasets and interleaved one item at a time until the first is exhausted
+    # (datasets.interleave_datasets with seed datasets.seed).
+    expresso:
+      path: "ylacombe/expresso"
+      name: null
+      data_files: null
+      split: "train"
+      audio_column: "audio"
+      text_column: "text"
+    emilia_subset:
+      path: "ylacombe/emilia-subset"  # 3.4M Emilia EN utterances, ~245 GB of parquet
+      name: null
+      data_files: null
+      split: "en"
+      audio_column: "mp3"
+      text_column: "text"
+      fraction: 0.05  # fixed subset: random.seed(seed); random.sample(range(num_rows), int(fraction * num_rows))
+      seed: 666
+
+optim:
+  learning_rate: 1e-5
+  num_warmup_updates: 20000  # as in the paper run; with ~10k total updates on one GPU the warmup never completes
+  epochs: 21
+  total_updates: null
+  use_ema: true
+
+ckpts:
+  save_per_updates: 1000
+  last_per_updates: 500
+  pretrain: ???  # pretrained duration predictor, e.g. ckpts.pretrain=DurPred_ckpts/emilia_en_48_CE/model_70000.pt
+  save_dir: DurPred_ckpts/finetune_expresso_emilia_subset_${datasets.batch_size}_${loss.loss_fn}
+
+wandb:
+  run_name: durpred_finetune_expresso_emilia_subset_${datasets.batch_size}_${loss.loss_fn}

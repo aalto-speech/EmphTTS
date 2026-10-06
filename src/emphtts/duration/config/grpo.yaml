@@ -1,0 +1,69 @@
+hydra:
+  run:
+    dir: DurPred_ckpts/${wandb.run_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+durpred:
+  config: "src/emphtts/duration/config/duration_predictor.yaml"  # duration model arch + mel_spec
+  ckpt: "checkpoints/duration_model.pt"  # supervised duration predictor to start from
+
+tts:
+  config: "src/emphtts/tts/configs/EmphTTS.yaml"
+  ckpt: "checkpoints/f5_model.pt"  # frozen F5-TTS model used for rollouts
+  vocab_file: "data/vocab.txt"
+  cfg_strength: 2.0
+  steps: 16
+  use_ema: true
+
+reward:
+  campplus_ckpt: "checkpoints/campplus_cn_en_common.pt"  # 3D-Speaker CAMPPlus speaker model
+  vocos_local_path: null       # set to a local directory, or null to download from HF
+  asr_model_id: "facebook/wav2vec2-large-960h-lv60-self"
+
+datasets:
+  batch_size: 1
+  num_workers: 8
+  sources:
+    vctk:
+      path: "kth-tmh/vctk"
+      name: "default"
+      data_files: null
+      split: "train"
+      audio_column: "audio"
+      text_column: "text"
+      num_sample: null          # null = full dataset; int = N samples; float in (0,1) = fraction
+    expresso:
+      path: "ylacombe/expresso"
+      name: null
+      data_files: null
+      split: "train"
+      audio_column: "audio"
+      text_column: "text"
+      num_sample: null
+
+grpo:
+  beta: 0.04                   # KL regularization weight
+  clip_param: 0.2              # PPO clip range
+  num_pre_samples: 16           # rollouts per prompt
+  compute_gen_logps: true
+  gumbel_tau: 0.7
+  asr_reward_type: "loss_ctc"  # reward dict key: "loss_ctc" or "wer"
+  sim_weight: 3.0              # weight for speaker similarity reward
+  use_stress_metric: false     # WhiStress reward; scripts/train_grpo_with_whistress.sh enables it with asr_reward_type: wer
+  stress_balanced_acc_weight: 1.0
+  asr_weight: 1.0              # weight for ASR penalty (subtracted from reward)
+
+optim:
+  learning_rate: 5.0e-6
+  num_warmup_updates: 100
+  all_steps: 1500
+  grad_accumulation_steps: 16
+  max_grad_norm: 1.0
+
+ckpts:
+  save_per_updates: 100
+  checkpoint_path: "DurPred_ckpts/${wandb.run_name}"
+
+wandb:
+  project: "EmphTTS"
+  run_name: "durpred_grpo"
+  resume_id: null

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emphtts"
+version = "0.1.0"
+description = "EmphTTS: emphasis-controlled TTS with F5-TTS, a duration predictor and duration GRPO"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+# Install a matching PyTorch/torchaudio pair for your CPU/CUDA platform first.
+dependencies = [
+    "torch>=2.3,<3",
+    "torchaudio>=2.3,<3",
+    "accelerate>=1.2,<2",
+    "ema-pytorch>=0.5.2,<1",
+    "huggingface-hub>=0.25,<2",
+    "hydra-core>=1.3,<2",
+    "librosa>=0.10,<1",
+    "numpy>=1.26,<2",
+    "omegaconf>=2.3,<3",
+    "safetensors>=0.4,<1",
+    "soundfile>=0.12,<1",
+    "torchdiffeq>=0.2,<1",
+    "tqdm>=4.65,<5",
+    "vocos>=0.1,<1",
+    "x-transformers>=1.31,<3",
+]
+
+[project.optional-dependencies]
+# F5-TTS and supervised duration training (WIDS datasets need webdataset's `wids` module)
+train = ["datasets>=3.2,<5", "wandb>=0.18,<1", "webdataset>=0.2.111,<1"]
+# TinyStress WER/CER and speaker similarity
+eval = ["faster-whisper>=1.1,<2", "jiwer>=3,<5", "pyarrow>=15", "s3prl>=0.4.18,<1"]
+# Duration-predictor GRPO with the Wav2Vec2 + CAMPPlus reward
+grpo = ["datasets>=3.2,<5", "jiwer>=3,<5", "transformers>=4.45,<6"]
+dev = ["pytest>=8", "ruff>=0.5"]
+all = ["emphtts[train,eval,grpo,dev]"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["emphtts*"]
+
+[tool.setuptools.package-data]
+"emphtts.tts" = ["configs/*.yaml"]
+"emphtts.duration" = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

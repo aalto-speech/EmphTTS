@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py310"
+
+[lint]
+select = ["E9", "E722", "F", "B006"]
+# Only ignore variables with names starting with "_".
+dummy-variable-rgx = "^_.*$"
+
+[lint.per-file-ignores]
+# Third-party code kept close to upstream (3D-Speaker CAMPPlus, UniSpeech ECAPA-TDNN).
+"src/emphtts/duration/campplus/*" = ["B006", "F401"]
+"src/emphtts/tts/eval/ecapa_tdnn.py" = ["B006"]
