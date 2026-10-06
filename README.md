@@ -118,7 +118,7 @@ The launcher puts the checkout on `PYTHONPATH` and switches the reward to Whispe
 
 ## TinyStress-15K evaluation
 
-Download the test shard and check it:
+Download the test shard:
 
 ```bash
 python - <<'PY'
@@ -130,7 +130,6 @@ target = Path('data/tinystress-15k/test-00000-of-00001.parquet')
 target.parent.mkdir(parents=True, exist_ok=True)
 shutil.copyfile(source, target)
 PY
-python scripts/validate_tinystress_shard.py
 ```
 
 Generate all 1,000 test utterances. Output files keep the dataset IDs, as in `tinystress_00042.wav`. Each item uses the prompt for its voice from `data/tinystress-15k/prompts.json`.
